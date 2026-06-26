@@ -1,0 +1,21 @@
+# $OpenBSD: files.pci.b43bsd,v 1.1 2026/06/24 xirtus Exp $
+#
+# Broadcom BCM4331 SoftMAC driver — entries to add to dev/pci/files.pci
+#
+
+device	b43bsd: net80211
+attach	b43bsd at pci
+file	dev/pci/b43bsd.c			b43bsd
+file	dev/ic/b43bsd_dma.c			b43bsd
+file	dev/ic/b43bsd_fw.c			b43bsd
+file	dev/ic/b43bsd_phy_n.c			b43bsd
+file	dev/ic/b43bsd_rate.c			b43bsd
+file	dev/ic/b43bsd_sprom.c			b43bsd
+file	dev/ic/b43bsd_debug.c			b43bsd
+file	dev/ic/b43bsd_ps.c			b43bsd
+file	dev/ic/b43bsd_wa.c			b43bsd
+file	dev/ic/b43bsd_btcoex.c			b43bsd
+file	dev/ic/b43bsd_tables.c			b43bsd
+file	dev/ic/b43bsd_radio.c			b43bsd
+file	dev/ic/b43bsd_xmit.c			b43bsd
+file	dev/ic/ssb.c				b43bsd

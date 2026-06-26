@@ -1,0 +1,16 @@
+*.o
+*.d
+*.gdb
+bsd
+bsd.gdb
+bsd.strip
+b43bsd_sim
+b43bsd_sim_test
+vmdisk.qcow2
+vmdisk.raw
+install79.iso
+boot.iso
+*.core
+b43bsd.c.tmp
+b43bsd_orig.c
+plan.html.bak

@@ -1,0 +1,143 @@
+.\" $OpenBSD: b43bsd.4,v 1.1 2026/06/24 xirtus Exp $
+.\"
+.\" Copyright (c) 2026 BroadcomBSD Project
+.\"
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.\"
+.Dd June 24, 2026
+.Dt B43BSD 4
+.Os
+.Sh NAME
+.Nm b43bsd
+.Nd Broadcom BCM4331 IEEE 802.11n SoftMAC wireless driver
+.Sh SYNOPSIS
+.Cd "b43bsd* at pci?"
+.Sh DESCRIPTION
+The
+.Nm
+driver provides support for Broadcom BCM4331 PCIe SoftMAC wireless
+chipsets found in 2011\(en2012 MacBook Pro laptops.
+.Pp
+It uses the Sonics Silicon Backplane (SSB) to communicate with the
+on-die 802.11 MAC and PHY-N radio, and loads vendor-supplied
+microcode firmware at runtime.
+.Pp
+The following features are supported:
+.Pp
+.Bl -bullet -offset indent
+.It
+Infrastructure (BSS) and monitor mode
+.It
+WPA2-PSK and WPA-Enterprise (via
+.Xr wpa_supplicant 8 )
+.It
+802.11n: MCS 0\(en23, 40 MHz channels, short guard interval
+.It
+2.4 GHz and 5 GHz dual-band operation
+.It
+A-MPDU aggregation
+.It
+Hardware WEP/TKIP/CCMP encryption (experimental)
+.El
+.Pp
+This driver requires firmware files from Broadcom, distributed
+separately.
+The firmware is loaded at runtime from
+.Pa /etc/firmware/b43bsd/
+by
+.Xr fw_update 8 .
+.Sh HARDWARE
+The following cards are supported:
+.Pp
+.Bl -column "Card" "Bus" "Standard" -offset indent
+.It Em Card Ta Em Bus Ta Em Standard
+.It Li "BCM4331" Ta PCIe x1 Ta 802.11n 3x3 MIMO
+.El
+.Sh FIRMWARE
+.Nm
+requires the following firmware files:
+.Pp
+.Bl -bullet -offset indent
+.It
+.Pa b43bsd/ucode30_mimo.fw
+(microcode)
+.It
+.Pa b43bsd/n0initvals30.fw
+(PHY-N base init values)
+.It
+.Pa b43bsd/n0bsinitvals30.fw
+(PHY-N band-switch init values)
+.It
+.Pa b43bsd/pcm30.fw
+(PCM TX samples)
+.El
+.Pp
+These files are installed automatically by
+.Xr fw_update 8
+from the
+.Pa b43bsd-firmware
+package.
+.Sh CAVEATS
+.Bl -bullet -offset indent
+.It
+2011\(en2012 MacBook Pro models with buggy EFI firmware may
+experience interrupt storms on the PCIe line shared by the
+BCM4331.
+The driver implements a hardware storm detector that masks
+spurious interrupts.
+Use the sysctl
+.Dv hw.b43bsd.reset_on_storm
+to auto-recover.
+.It
+Suspend/resume support is experimental.
+Re-association may be required after resume.
+.El
+.Sh DIAGNOSTICS
+.Bl -diag
+.It "b43bsd0: cannot map BAR0"
+The PCI memory BAR could not be mapped.
+The device may be disabled or malfunctioning.
+.It "b43bsd0: firmware start timeout"
+The microcode firmware did not start within the expected time
+(500 ms).
+Check that the firmware files are present in
+.Pa /etc/firmware/b43bsd/ .
+.It "b43bsd0: spurious interrupt storm, masking until reset"
+The EFI firmware left the BCM4331 in a state where it continuously
+asserts interrupts.
+The driver has masked the interrupt line to protect the system.
+Reset with
+.Dv hw.b43bsd.reset_on_storm .
+.El
+.Sh SEE ALSO
+.Xr arp 4 ,
+.Xr ifmedia 4 ,
+.Xr intro 4 ,
+.Xr netintro 4 ,
+.Xr pci 4 ,
+.Xr hostname.if 5 ,
+.Xr fw_update 8 ,
+.Xr ifconfig 8 ,
+.Xr wpa_supplicant 8
+.Sh HISTORY
+The
+.Nm
+driver first appeared in OpenBSD 7.9-current.
+.Sh AUTHORS
+.An -nosplit
+The
+.Nm
+driver was written for the BroadcomBSD project,
+porting the Linux
+.Nm b43
+driver to OpenBSD.

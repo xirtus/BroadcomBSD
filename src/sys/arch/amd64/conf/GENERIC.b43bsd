@@ -1,0 +1,61 @@
+# $OpenBSD: GENERIC.b43bsd,v 1.1 2026/06/25 xirtus Exp $
+#
+# Add this line to sys/arch/amd64/conf/GENERIC to enable the b43bsd driver:
+#
+#   b43bsd* at pci?
+#
+# Add this line to sys/dev/pci/files.pci to include the driver files:
+#   (see sys/dev/pci/files.pci.b43bsd in this project)
+#
+# Files to copy into the OpenBSD source tree:
+#
+#   sys/dev/pci/b43bsd.c             → /usr/src/sys/dev/pci/b43bsd.c
+#   sys/dev/pci/b43bsdvar.h          → /usr/src/sys/dev/pci/b43bsdvar.h
+#   sys/dev/pci/b43bsdreg.h          → /usr/src/sys/dev/pci/b43bsdreg.h
+#   sys/dev/ic/ssb.c                 → /usr/src/sys/dev/ic/ssb.c
+#   sys/dev/ic/ssbvar.h              → /usr/src/sys/dev/ic/ssbvar.h
+#   sys/dev/ic/ssbreg.h              → /usr/src/sys/dev/ic/ssbreg.h
+#   sys/dev/ic/b43bsd_dma.c          → /usr/src/sys/dev/ic/b43bsd_dma.c
+#   sys/dev/ic/b43bsd_dma.h          → /usr/src/sys/dev/ic/b43bsd_dma.h
+#   sys/dev/ic/b43bsd_fw.c           → /usr/src/sys/dev/ic/b43bsd_fw.c
+#   sys/dev/ic/b43bsd_fw.h           → /usr/src/sys/dev/ic/b43bsd_fw.h
+#   sys/dev/ic/b43bsd_phy_n.c        → /usr/src/sys/dev/ic/b43bsd_phy_n.c
+#   sys/dev/ic/b43bsd_phy_n.h        → /usr/src/sys/dev/ic/b43bsd_phy_n.h
+#   sys/dev/ic/b43bsd_rate.c          → /usr/src/sys/dev/ic/b43bsd_rate.c
+#   sys/dev/ic/b43bsd_rate.h          → /usr/src/sys/dev/ic/b43bsd_rate.h
+#   sys/dev/ic/b43bsd_sprom.c        → /usr/src/sys/dev/ic/b43bsd_sprom.c
+#   sys/dev/ic/b43bsd_debug.c        → /usr/src/sys/dev/ic/b43bsd_debug.c
+#   share/man/man4/b43bsd.4          → /usr/src/share/man/man4/b43bsd.4
+#
+# Append to /usr/src/sys/dev/pci/files.pci:
+#   include "dev/pci/files.pci.b43bsd"
+#
+# Or add these lines:
+#   device  b43bsd: net80211
+#   attach  b43bsd at pci
+#   file    dev/pci/b43bsd.c            b43bsd
+#   file    dev/ic/ssb.c                b43bsd
+#   file    dev/ic/b43bsd_dma.c         b43bsd
+#   file    dev/ic/b43bsd_fw.c          b43bsd
+#   file    dev/ic/b43bsd_phy_n.c       b43bsd
+#   file    dev/ic/b43bsd_rate.c         b43bsd
+#   file    dev/ic/b43bsd_sprom.c       b43bsd
+#   file    dev/ic/b43bsd_debug.c       b43bsd
+#
+# Build a custom kernel:
+#   # cd /usr/src/sys/arch/amd64/compile/GENERIC.MP
+#   # make config
+#   # make && make install
+#   # reboot
+#
+# Firmware files (place in /etc/firmware/b43bsd/):
+#   ucode30_mimo.fw
+#   n0initvals30.fw
+#   n0bsinitvals30.fw
+#   pcm30.fw
+#
+# The BCM4331's PCI device ID is 0x4331 (vendor 0x14e4).
+# If the bwi(4) stub is present, it must be disabled/removed
+# as it masks the BCM4331 to prevent interrupt storms.
+#
+b43bsd*	at pci?
