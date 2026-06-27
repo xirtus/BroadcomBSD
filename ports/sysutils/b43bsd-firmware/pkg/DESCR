@@ -1,0 +1,19 @@
+The BCM4331 SoftMAC WiFi chip used in 2011-2012 MacBook Pro laptops
+requires proprietary Broadcom firmware to operate. This firmware is not
+distributed in the linux-firmware repository — it must be extracted from
+Broadcom's binary driver package using b43-fwcutter.
+
+Installation:
+  1. Install b43-fwcutter:  # pkg_add b43-fwcutter
+  2. Obtain the Broadcom driver: broadcom-wl-5.100.138.tar.bz2
+     Available from: https://wireless.docs.kernel.org/en/latest/en/users/drivers/b43.html
+  3. Extract firmware:
+     # b43-fwcutter -w /etc/firmware/b43bsd broadcom-wl-5.100.138.tar.bz2
+  4. Verify:  # ls /etc/firmware/b43bsd/
+     ucode30_mimo.fw  n0initvals30.fw  n0bsinitvals30.fw  pcm30.fw
+
+The extracted firmware is loaded by the b43bsd(4) kernel driver using
+loadfirmware(9).
+
+For more information, see the b43 firmware documentation:
+https://wireless.docs.kernel.org/en/latest/en/users/drivers/b43/firmware.html

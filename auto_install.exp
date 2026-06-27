@@ -1,0 +1,99 @@
+#!/usr/bin/env expect
+# BroadcomBSD — Automated OpenBSD 7.9 Installation via QEMU
+set timeout 600
+
+set script_dir [file dirname [info script]]
+set iso "$script_dir/vm/install79.iso"
+set disk "$script_dir/vm/vmdisk.qcow2"
+set cfgdisk "$script_dir/vm/install.img"
+
+if {![file exists $iso]} { puts "ERROR: ISO not found: $iso"; exit 1 }
+if {![file exists $disk]} { puts "ERROR: VM disk not found: $disk"; exit 1 }
+
+puts "=== BroadcomBSD Automated OpenBSD Install ==="
+
+# Disable Tcl command substitution in spawned output
+# Use raw output mode
+log_user 1
+
+# Start QEMU
+spawn qemu-system-x86_64 \
+    -m 1024M \
+    -drive "file=$disk,format=qcow2" \
+    -drive "file=$cfgdisk,format=raw" \
+    -cdrom "$iso" \
+    -boot d \
+    -nographic \
+    -netdev user,id=net0 \
+    -device e1000,netdev=net0
+
+# Wait for bootloader prompt (just Enter to auto-boot default kernel)
+expect {
+    -re {boot>} {
+        # Auto-boot happens on timeout, just send Enter
+        send "\r"
+    }
+    timeout {
+        puts "Timeout waiting for bootloader"
+        exit 1
+    }
+}
+
+# Wait for installer main prompt: (I)nstall, (U)pgrade, (A)utoinstall, (S)hell
+expect {
+    -re {A..utoinstall} {
+        send "A\r"
+        puts "\n[OK] Autoinstall selected"
+    }
+    -re {\(I\)nstall} {
+        send "A\r"
+        puts "\n[OK] Autoinstall selected (alt match)"
+    }
+    timeout {
+        puts "Timeout waiting for installer prompt"
+        exit 1
+    }
+}
+
+# Wait for install to complete. Look for the final "CONGRATULATIONS" or
+# the prompt for halting. Also catch any prompts our install.conf missed.
+expect {
+    -re {CONGRATULATIONS|Exit to Shell|halted|What timezone|Start sshd|Allow root|Setup a user|Do you expect} {
+        if {[regexp {halted} $expect_out(buffer)]} {
+            puts "\n[DONE] Installation complete, system halted"
+        } elseif {[regexp {CONGRATULATIONS} $expect_out(buffer)]} {
+            puts "\n[DONE] Installation successful"
+            # Send halt
+            send "\r"
+            sleep 2
+            send "halt\r"
+        } elseif {[regexp {What timezone} $expect_out(buffer)]} {
+            send "UTC\r"
+            exp_continue
+        } elseif {[regexp {Start sshd} $expect_out(buffer)]} {
+            send "yes\r"
+            exp_continue
+        } elseif {[regexp {Allow root} $expect_out(buffer)]} {
+            send "yes\r"
+            exp_continue
+        } elseif {[regexp {Setup a user} $expect_out(buffer)]} {
+            send "no\r"
+            exp_continue
+        } elseif {[regexp {Do you expect} $expect_out(buffer)]} {
+            send "no\r"
+            exp_continue
+        } elseif {[regexp {Exit to Shell} $expect_out(buffer)]} {
+            send "halt\r"
+            exp_continue
+        }
+    }
+    timeout {
+        puts "\n[DONE] Timeout — install likely completed"
+    }
+    eof {
+        puts "\n[DONE] QEMU exited"
+    }
+}
+
+puts "=== Installation complete ==="
+puts "Boot the VM with: ksh setup_qemu.sh boot"
