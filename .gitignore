@@ -1,12 +1,9 @@
 *.o
 *.d
 *.gdb
-bsd
+/bsd
 bsd.gdb
 bsd.strip
-b43bsd_sim
-b43bsd_sim_test
-vmdisk.qcow2
 vmdisk.raw
 install79.iso
 boot.iso
@@ -14,8 +11,5 @@ boot.iso
 b43bsd.c.tmp
 b43bsd_orig.c
 plan.html.bak
-bsd.rd
 .github_token
 *.swp
-ai/
-isotest/
