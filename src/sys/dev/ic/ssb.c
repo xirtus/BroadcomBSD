@@ -290,6 +290,54 @@ ssb_enum_cores(struct ssb_bus *bus)
 	}
 
 	/*
+	 * If the BAR0 window is too small to reach all core slots
+	 * (e.g. 16 KB on MacBook Pro — slots 0-3 only, slot 4+ unreachable),
+	 * the MIMO PHY core at slot 4 won't be found by the loop above.
+	 *
+	 * BCM4331 always places the MIMO PHY at slot 4 (backplane offset
+	 * 0x4000 from ChipCommon).  Hard-code it when we stopped at the
+	 * boundary and we have a BCM4331 chip.
+	 */
+	if (bus->mimo_phy_idx < 0 && bus->ncores > 0 &&
+	    bus->ncores < SSB_MAX_NR_CORES &&
+	    bus->chipcommon_idx >= 0 &&
+	    bus->chip_id == 0x4331) {
+		uint32_t phy_enum_off = bus->ncores * SSB_CORE_SIZE;
+
+		/*
+		 * Check if enumeration stopped because the next slot
+		 * (ncores * 0x1000) would be at or beyond BAR0 end.
+		 */
+		if (phy_enum_off >= bus->mapsize ||
+		    phy_enum_off + SSB_CORE_SIZE > bus->mapsize) {
+			struct ssb_core *core;
+			uint32_t cc_backplane;
+
+			cc_backplane = bus->cores[
+			    bus->chipcommon_idx].base;
+			core = &bus->cores[bus->ncores];
+			core->id = SSB_COREID_MIMO_PHY;
+			core->rev = 16;	/* N-PHY rev 16 (BCM4331) */
+			core->index = bus->ncores;
+			/*
+			 * Backplane base = ChipCommon base + slot offset.
+			 * Will be normalized below to BAR0-relative.
+			 */
+			core->base = cc_backplane + phy_enum_off;
+			core->wrap = core->base + SSB_CORE_SIZE;
+			core->tmslow = 0;
+			core->tmshigh = 0;
+			bus->mimo_phy_idx = bus->ncores;
+			bus->ncores++;
+
+			printf("%s:   core%u: MIMO PHY rev %u "
+			    "(hard-coded, beyond BAR0 window)\n",
+			    bus->dev.dv_xname,
+			    bus->ncores - 1, core->rev);
+		}
+	}
+
+	/*
 	 * Normalize core base addresses relative to ChipCommon.
 	 * Save non-normalized cc_base for BAR0_WIN switching.
 	 */
@@ -348,10 +396,14 @@ ssb_core_reset(struct ssb_bus *bus, int core_idx)
 
 	tmslow = ssb_core_read32(bus, core_idx, SSB_TMSLOW);
 
-	/* If the core is already out of reset with clock running,
-	 * don't touch it.  Resetting a live PCIe core kills the link. */
+	/*
+	 * If the core is already out of reset with clock running,
+	 * don't touch it.  Resetting a live core needlessly
+	 * disrupts hardware state, and resetting a running
+	 * PCIe core kills the PCIe link.
+	 */
 	if ((tmslow & (SSB_TMSLOW_RESET | SSB_TMSLOW_CLOCK)) ==
-	    SSB_TMSLOW_CLOCK && bus->pcie_idx == core_idx) {
+	    SSB_TMSLOW_CLOCK) {
 		return;
 	}
 
@@ -363,9 +415,9 @@ ssb_core_reset(struct ssb_bus *bus, int core_idx)
 	if (bus->pcie_idx == core_idx)
 		delay(1000);	/* PCIe: 1ms for link to go down */
 	else
-		delay(1);
+		delay(10);
 
-	/* Clear any error state. */
+	/* Clear any error state on TMSHIGH. */
 	if (ssb_core_read32(bus, core_idx, SSB_TMSHIGH) &
 	    (SSB_TMSHIGH_SERR | SSB_TMSHIGH_BUSY)) {
 		ssb_core_write32(bus, core_idx, SSB_TMSHIGH, 0);
@@ -378,8 +430,10 @@ ssb_core_reset(struct ssb_bus *bus, int core_idx)
 	/* Wait for core to come out of reset. */
 	if (bus->pcie_idx == core_idx)
 		delay(50000);	/* PCIe: 50ms for link retraining */
+	else if (bus->ieee80211_idx == core_idx)
+		delay(1000);	/* 802.11 MAC: 1ms for digital logic */
 	else
-		delay(1);
+		delay(10);	/* Other cores: 10µs */
 
 	/* Clear force gated clocks. */
 	ssb_core_write32(bus, core_idx, SSB_TMSLOW,

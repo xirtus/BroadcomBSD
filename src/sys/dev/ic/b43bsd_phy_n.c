@@ -55,36 +55,68 @@
 uint16_t
 nphy_read(struct b43bsd_softc *sc, uint16_t offset)
 {
-	if (sc->sc_ssb->phy_needs_window_switch) {
-		uint32_t old_win;
+	struct ssb_bus *bus;
+
+	if (sc->sc_ssb == NULL || sc->sc_ssb->mimo_phy_idx < 0)
+		return 0;
+	bus = sc->sc_ssb;
+
+	if (bus->phy_needs_window_switch) {
+		uint32_t old_win, old_mask;
 		uint16_t val;
 
-		old_win = ssb_phy_window_switch(sc->sc_ssb,
+		/*
+		 * Mask 802.11 core interrupts during the window switch.
+		 * If an IRQ fires while BAR0 is remapped to the PHY core,
+		 * the handler would read garbage from the wrong core and
+		 * acknowledge a phantom interrupt.
+		 */
+		old_mask = bus_space_read_4(sc->sc_st, sc->sc_sh,
+		    sc->sc_11core_offset + B43_MMIO_GEN_IRQ_MASK);
+		bus_space_write_4(sc->sc_st, sc->sc_sh,
+		    sc->sc_11core_offset + B43_MMIO_GEN_IRQ_MASK, 0);
+
+		old_win = ssb_phy_window_switch(bus,
 		    sc->sc_pct, sc->sc_pcitag);
-		val = ssb_read16(sc->sc_ssb, offset);
-		ssb_phy_window_restore(sc->sc_ssb,
+		val = ssb_read16(bus, offset);
+		ssb_phy_window_restore(bus,
 		    sc->sc_pct, sc->sc_pcitag, old_win);
+
+		bus_space_write_4(sc->sc_st, sc->sc_sh,
+		    sc->sc_11core_offset + B43_MMIO_GEN_IRQ_MASK, old_mask);
 		return val;
 	}
-	return ssb_core_read16(sc->sc_ssb,
-	    sc->sc_ssb->mimo_phy_idx, offset);
+	return ssb_core_read16(bus, bus->mimo_phy_idx, offset);
 }
 
 void
 nphy_write(struct b43bsd_softc *sc, uint16_t offset, uint16_t val)
 {
-	if (sc->sc_ssb->phy_needs_window_switch) {
-		uint32_t old_win;
+	struct ssb_bus *bus;
 
-		old_win = ssb_phy_window_switch(sc->sc_ssb,
+	if (sc->sc_ssb == NULL || sc->sc_ssb->mimo_phy_idx < 0)
+		return;
+	bus = sc->sc_ssb;
+
+	if (bus->phy_needs_window_switch) {
+		uint32_t old_win, old_mask;
+
+		old_mask = bus_space_read_4(sc->sc_st, sc->sc_sh,
+		    sc->sc_11core_offset + B43_MMIO_GEN_IRQ_MASK);
+		bus_space_write_4(sc->sc_st, sc->sc_sh,
+		    sc->sc_11core_offset + B43_MMIO_GEN_IRQ_MASK, 0);
+
+		old_win = ssb_phy_window_switch(bus,
 		    sc->sc_pct, sc->sc_pcitag);
-		ssb_write16(sc->sc_ssb, offset, val);
-		ssb_phy_window_restore(sc->sc_ssb,
+		ssb_write16(bus, offset, val);
+		ssb_phy_window_restore(bus,
 		    sc->sc_pct, sc->sc_pcitag, old_win);
+
+		bus_space_write_4(sc->sc_st, sc->sc_sh,
+		    sc->sc_11core_offset + B43_MMIO_GEN_IRQ_MASK, old_mask);
 		return;
 	}
-	ssb_core_write16(sc->sc_ssb,
-	    sc->sc_ssb->mimo_phy_idx, offset, val);
+	ssb_core_write16(bus, bus->mimo_phy_idx, offset, val);
 }
 
 void

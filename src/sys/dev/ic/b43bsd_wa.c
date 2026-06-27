@@ -54,7 +54,6 @@
 #define SSB_CHIPCO_CLKCTLST	0x01E0
 #define B43BSD_DMA64_RXSTAT_FIFOEMPTY	0x00000001
 #define B43BSD_DMA64_RX_DATA		0x0240
-#define DMA_RD(sc, r) bus_space_read_4((sc)->sc_st, (sc)->sc_sh, (sc)->sc_11core_offset + (r))
 
 /* ------------------------------------------------------------------ */
 /* WA1: BCM4331 TX queue limitation                                     */
@@ -192,17 +191,17 @@ b43bsd_wa_efi_reset(struct b43bsd_softc *sc)
 	/* 1. Disable ASPM on PCIe capability. */
 	{
 		int pcie_cap;
-		pcireg_t lnkctl;
+		pcireg_t lcsr;
 
 		pcie_cap = pci_get_capability(sc->sc_pct, sc->sc_pcitag,
 		    PCI_CAP_PCIEXPRESS, NULL, NULL);
 		if (pcie_cap) {
-			lnkctl = pci_conf_read(sc->sc_pct, sc->sc_pcitag,
-			    pcie_cap + PCI_PCIE_LCAP);
-			lnkctl &= ~(PCI_PCIE_LCAP_ASPM_L0S |
-			    PCI_PCIE_LCAP_ASPM_L1);
+			lcsr = pci_conf_read(sc->sc_pct, sc->sc_pcitag,
+			    pcie_cap + PCI_PCIE_LCSR);
+			lcsr &= ~(PCI_PCIE_LCSR_ASPM_L0S |
+			    PCI_PCIE_LCSR_ASPM_L1);
 			pci_conf_write(sc->sc_pct, sc->sc_pcitag,
-			    pcie_cap + PCI_PCIE_LCAP, lnkctl);
+			    pcie_cap + PCI_PCIE_LCSR, lcsr);
 		}
 	}
 
@@ -220,8 +219,6 @@ b43bsd_wa_efi_reset(struct b43bsd_softc *sc)
 		for (i = 0; i < 100; i++) {
 			uint32_t clkst;
 			clkst = ssb_read32(sc->sc_ssb, SSB_CHIPCO_CLKCTLST);
-#define DMA_WR(sc, r, v) bus_space_write_4((sc)->sc_st, (sc)->sc_sh, (sc)->sc_11core_offset + (r), (v))
-#define DMA_RD(sc, r) bus_space_read_4((sc)->sc_st, (sc)->sc_sh, (sc)->sc_11core_offset + (r))
 			if (clkst & 0x00000001)
 				break;
 			delay(100);
@@ -250,6 +247,9 @@ b43bsd_wa_pcie_tlp(struct b43bsd_softc *sc)
 	uint32_t val;
 
 	if (chip_id != 0x4331)
+		return;
+
+	if (sc->sc_ssb == NULL)
 		return;
 
 	/*

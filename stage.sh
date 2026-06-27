@@ -30,15 +30,17 @@ grep 'b43bsd_attach_level =' "$SRC"
 echo "Building kernel..."
 make -C "$BLD" -j4
 
-echo "Installing to /bsd..."
-cp "$BLD/bsd" /bsd
+echo "Installing to /bsd.test..."
+cp "$BLD/bsd" /bsd.test
+chmod 755 /bsd.test
+echo "/bsd (safe fallback) is NOT modified"
 
 echo ""
-echo "=== Done. reboot to test level $LEVEL ==="
+echo "=== Done. reboot and at the boot> prompt type: boot /bsd.test ==="
 case "$LEVEL" in
 	0) echo "Expected: 'b43bsd0 at pci...: BCM4331 rev 2 (attach level 0) stub-ok'" ;;
 	1) echo "Expected: '... BAR0 0x4000 level1-ok'" ;;
-	2) echo "Expected: '... BAR0 0xXXXX win=0xXXXXXXXX: BCM4331 rev 2 level2-ok'" ;;
+	2) echo "Expected: '... BAR0 0xXXXX: BCM4331 rev 2 level2-ok'" ;;
 	3) echo "Expected: '... SSB cores enumerated, level3-ok'" ;;
 	4) echo "Expected: '... PMU init + cores enabled, level4-ok'" ;;
 	5) echo "Expected: '... SPROM + MAC + net80211, level5-ok'" ;;

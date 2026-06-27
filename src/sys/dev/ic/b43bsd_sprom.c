@@ -100,7 +100,7 @@ sprom_crc16(const uint16_t *data, int nwords)
 int
 b43bsd_sprom_parse(struct b43bsd_softc *sc)
 {
-	uint16_t sprom_rev;
+	uint16_t sprom_rev, sprom_crc_word;
 	uint8_t mac[IEEE80211_ADDR_LEN];
 	int i;
 
@@ -108,10 +108,13 @@ b43bsd_sprom_parse(struct b43bsd_softc *sc)
 	 * BCM4331: external PA lines must be disabled during SPROM
 	 * access to avoid GPIO conflicts, then re-enabled for TX.
 	 */
-	ssb_bcm4331_ext_pa_lines_ctl(sc->sc_ssb, 0);
+	if (sc->sc_ssb != NULL)
+		ssb_bcm4331_ext_pa_lines_ctl(sc->sc_ssb, 0);
 
-	/* Read SPROM revision. */
-	sprom_rev = sprom_read(sc, 0x007E) & 0xff;
+	/* Read SPROM revision and CRC from word 0x007E.
+	 * Low byte = SPROM revision, high byte = CRC8 over words 0x0000-0x007D. */
+	sprom_crc_word = sprom_read(sc, 0x007E);
+	sprom_rev = sprom_crc_word & 0xff;
 
 	printf("%s: SPROM rev %d\n", sc->sc_dev.dv_xname, sprom_rev);
 
@@ -192,7 +195,9 @@ b43bsd_sprom_parse(struct b43bsd_softc *sc)
 
 	/*
 	 * Read regulatory domain (country code + revision).
-	 * SPROM offset 0x0058: lower byte = country code, upper = revision.
+	 * SPROM rev 8 offset 0x0058: lower byte = Broadcom numeric
+	 * country code, upper byte = regulatory revision.
+	 * Country codes: 0 = world, 1 = USA (FCC), others = ETSI.
 	 */
 	{
 		uint16_t reg;
@@ -201,49 +206,29 @@ b43bsd_sprom_parse(struct b43bsd_softc *sc)
 		reg = sprom_read(sc, 0x0058);
 		country = reg & 0xff;
 
-		if (country != 0) {
-			uint8_t code[2];
+		printf("%s: regulatory domain country=%d rev=%d\n",
+		    sc->sc_dev.dv_xname, country, (reg >> 8) & 0xff);
 
-			code[0] = (country >> 8) & 0xff;
-			code[1] = country & 0xff;
-
-			printf("%s: regulatory domain '%c%c' (0x%04x)\n",
-			    sc->sc_dev.dv_xname,
-			    code[0] ? code[0] : '?',
-			    code[1] ? code[1] : '?',
-			    reg);
-
+		/*
+		 * Apply regulatory restrictions:
+		 * - USA (FCC, code 1): max 30 dBm 2.4 GHz
+		 * - ETSI / world: max 20 dBm 2.4 GHz / 5 GHz
+		 */
+		if (country == 0) {
+			/* World — use SPROM defaults. */
+		} else if (country == 1) {
+			/* USA (FCC): standard limits. */
+			if (sc->sc_maxpwr_2ghz > 30)
+				sc->sc_maxpwr_2ghz = 30;
+		} else {
 			/*
-			 * Apply regulatory restrictions:
-			 * - ETSI (EU): DFS on 5 GHz, max 20 dBm 2.4 GHz
-			 * - FCC (US): max 30 dBm 2.4 GHz, no DFS on UNII-1/3
-			 * - Japan: DFS on 5 GHz, max channel 14 only
-			 * - Rest of world: FCC-like defaults
+			 * ETSI / rest of world:
+			 * 2.4 GHz max 20 dBm, 5 GHz max 20 dBm.
 			 */
-			if (country == 0x0000) {
-				/* No regulatory — use default FCC. */
-			} else if (country == 0x5553) {
-				/* US (FCC): standard limits. */
-				sc->sc_maxpwr_2ghz =
-				    (sc->sc_maxpwr_2ghz > 30) ?
-				    30 : sc->sc_maxpwr_2ghz;
-			} else if (country == 0x4a50) {
-				/* Japan: channel 14 only for 802.11b. */
-				sc->sc_maxpwr_2ghz =
-				    (sc->sc_maxpwr_2ghz > 20) ?
-				    20 : sc->sc_maxpwr_2ghz;
-			} else {
-				/*
-				 * ETSI / rest of world:
-				 * 2.4 GHz max 20 dBm, DFS required.
-				 */
-				sc->sc_maxpwr_2ghz =
-				    (sc->sc_maxpwr_2ghz > 20) ?
-				    20 : sc->sc_maxpwr_2ghz;
-				sc->sc_maxpwr_5ghz =
-				    (sc->sc_maxpwr_5ghz > 20) ?
-				    20 : sc->sc_maxpwr_5ghz;
-			}
+			if (sc->sc_maxpwr_2ghz > 20)
+				sc->sc_maxpwr_2ghz = 20;
+			if (sc->sc_maxpwr_5ghz > 20)
+				sc->sc_maxpwr_5ghz = 20;
 		}
 	}
 
@@ -278,12 +263,24 @@ b43bsd_sprom_parse(struct b43bsd_softc *sc)
 			sc->sc_mcs_pwr_5g[j + 8] = sc->sc_mcs_pwr_5g[j];
 		}
 
-		/* Compute max power from the most restrictive offset. */
+		/* Compute max power from the most restrictive offset.
+		 * sc_mcs_pwr arrays contain signed offsets in units of 0.25 dBm.
+		 * Negative offsets reduce power; positive offsets are clamped to 0. */
 		for (i = 0; i < 16; i++) {
-			if (sc->sc_mcs_pwr_2g[i] < maxpwr_2g)
-				maxpwr_2g -= (sc->sc_mcs_pwr_2g[i] / 4);
-			if (sc->sc_mcs_pwr_5g[i] < maxpwr_5g)
-				maxpwr_5g -= (sc->sc_mcs_pwr_5g[i] / 4);
+			if (sc->sc_mcs_pwr_2g[i] < maxpwr_2g) {
+				int8_t off = sc->sc_mcs_pwr_2g[i];
+
+				if (off > 0)
+					off = 0;
+				maxpwr_2g += (off / 4);
+			}
+			if (sc->sc_mcs_pwr_5g[i] < maxpwr_5g) {
+				int8_t off = sc->sc_mcs_pwr_5g[i];
+
+				if (off > 0)
+					off = 0;
+				maxpwr_5g += (off / 4);
+			}
 		}
 
 		sc->sc_maxpwr_2ghz = maxpwr_2g;
@@ -295,7 +292,8 @@ b43bsd_sprom_parse(struct b43bsd_softc *sc)
 	}
 
 	/* Re-enable external PA lines now that SPROM access is complete. */
-	ssb_bcm4331_ext_pa_lines_ctl(sc->sc_ssb, 1);
+	if (sc->sc_ssb != NULL)
+		ssb_bcm4331_ext_pa_lines_ctl(sc->sc_ssb, 1);
 
 	/*
 	 * Validate SPROM CRC16-CCITT.
@@ -311,12 +309,11 @@ b43bsd_sprom_parse(struct b43bsd_softc *sc)
 			sprom_data[j] = sprom_read(sc, (uint16_t)j);
 
 		computed_crc = sprom_crc16(sprom_data, 0x7E);
-		stored_crc = sprom_data[0x7E - 1]; /* last word is CRC */
 		/*
-		 * The CRC is stored in the high byte of the last word;
-		 * the low byte is the SPROM revision (already read).
+		 * The CRC8 is stored in the high byte of word 0x007E;
+		 * the low byte is the SPROM revision (already extracted).
 		 */
-		stored_crc = (stored_crc & 0xff00) >> 8;
+		stored_crc = (sprom_crc_word & 0xff00) >> 8;
 
 		if (computed_crc == stored_crc) {
 			printf("%s: SPROM CRC16 valid (0x%02x)\n",

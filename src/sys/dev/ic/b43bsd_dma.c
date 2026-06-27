@@ -85,7 +85,7 @@ static int
 b43bsd_dma_alloc_ring(struct b43bsd_softc *sc, struct b43bsd_dma_ring *ring,
     int nslots)
 {
-	int error, nsegs;
+	int error;
 
 	ring->nslots = nslots;
 	ring->cur_tx = 0;
@@ -102,14 +102,14 @@ b43bsd_dma_alloc_ring(struct b43bsd_softc *sc, struct b43bsd_dma_ring *ring,
 	/* Allocate DMA memory for descriptors. */
 	error = bus_dmamem_alloc(sc->sc_dmat,
 	    B43BSD_DMA64_RINGMEMSIZE, B43BSD_DMA64_RINGMEMSIZE, 0,
-	    &ring->ring_seg, 1, &nsegs, BUS_DMA_NOWAIT);
+	    &ring->ring_seg, 1, &ring->ring_nsegs, BUS_DMA_NOWAIT);
 	if (error != 0)
 		goto fail_map;
 
 	/* Map DMA memory to kernel virtual address. */
-	error = bus_dmamem_map(sc->sc_dmat, &ring->ring_seg, nsegs,
-	    B43BSD_DMA64_RINGMEMSIZE, (caddr_t *)&ring->ring_desc,
-	    BUS_DMA_NOWAIT);
+	error = bus_dmamem_map(sc->sc_dmat, &ring->ring_seg,
+	    ring->ring_nsegs, B43BSD_DMA64_RINGMEMSIZE,
+	    (caddr_t *)&ring->ring_desc, BUS_DMA_NOWAIT);
 	if (error != 0)
 		goto fail_mem;
 
@@ -129,7 +129,7 @@ fail_load:
 	bus_dmamem_unmap(sc->sc_dmat, (caddr_t)ring->ring_desc,
 	    B43BSD_DMA64_RINGMEMSIZE);
 fail_mem:
-	bus_dmamem_free(sc->sc_dmat, &ring->ring_seg, nsegs);
+	bus_dmamem_free(sc->sc_dmat, &ring->ring_seg, ring->ring_nsegs);
 fail_map:
 	bus_dmamap_destroy(sc->sc_dmat, ring->ring_map);
 	return error;
@@ -182,7 +182,7 @@ b43bsd_dma_free_ring(struct b43bsd_softc *sc, struct b43bsd_dma_ring *ring)
 	bus_dmamap_unload(sc->sc_dmat, ring->ring_map);
 	bus_dmamem_unmap(sc->sc_dmat, (caddr_t)ring->ring_desc,
 	    B43BSD_DMA64_RINGMEMSIZE);
-	bus_dmamem_free(sc->sc_dmat, &ring->ring_seg, 1);
+	bus_dmamem_free(sc->sc_dmat, &ring->ring_seg, ring->ring_nsegs);
 	bus_dmamap_destroy(sc->sc_dmat, ring->ring_map);
 
 	ring->ring_desc = NULL;
@@ -323,6 +323,7 @@ b43bsd_dma_tx_start(struct b43bsd_softc *sc, struct mbuf *m,
 	 * ctrl1: address extension [17:16]
 	 */
 	dma_desc_write(ring, slot,
+	    B43BSD_DMA64_DCTL0_DTABLEEND |
 	    B43BSD_DMA64_DCTL0_FRAMESTART | B43BSD_DMA64_DCTL0_FRAMEEND |
 	    B43BSD_DMA64_DCTL0_IRQ,
 	    (uint32_t)m->m_pkthdr.len,
@@ -351,7 +352,11 @@ void
 b43bsd_dma_tx_done(struct b43bsd_softc *sc)
 {
 	struct b43bsd_dma_ring *ring = &sc->sc_txring;
+	struct ifnet *ifp = &sc->sc_ic.ic_if;
 	int i;
+
+	bus_dmamap_sync(sc->sc_dmat, ring->ring_map,
+	    0, B43BSD_DMA64_RINGMEMSIZE, BUS_DMASYNC_POSTREAD);
 
 	for (i = 0; i < ring->nslots; i++) {
 		struct b43bsd_dma_desc64 *desc = &ring->ring_desc[i];
@@ -380,6 +385,14 @@ b43bsd_dma_tx_done(struct b43bsd_softc *sc)
 		m_freem(ring->tx_slot[i].m);
 		ring->tx_slot[i].m = NULL;
 		ring->used--;
+	}
+
+	/* If TX was stalled (IFF_OACTIVE) and space is now available, restart. */
+	if (ifp->if_flags & IFF_OACTIVE) {
+		if (ring->used < ring->nslots) {
+			ifp->if_flags &= ~IFF_OACTIVE;
+			ifp->if_start(ifp);
+		}
 	}
 }
 
@@ -456,6 +469,9 @@ b43bsd_dma_rx_process(struct b43bsd_softc *sc)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &ic->ic_if;
 	int i;
+
+	bus_dmamap_sync(sc->sc_dmat, ring->ring_map,
+	    0, B43BSD_DMA64_RINGMEMSIZE, BUS_DMASYNC_POSTREAD);
 
 	for (i = 0; i < ring->nslots; i++) {
 		struct b43bsd_dma_desc64 *desc = &ring->ring_desc[i];
@@ -761,6 +777,8 @@ b43bsd_dma_tx_status_process(struct b43bsd_softc *sc)
 	 * We walk from our last-known completion point to the hardware index.
 	 */
 	status = DMA_READ(sc, B43BSD_DMA64_TX_STATUS);
+	bus_dmamap_sync(sc->sc_dmat, ring->ring_map,
+	    0, B43BSD_DMA64_RINGMEMSIZE, BUS_DMASYNC_POSTREAD);
 	{
 		uint32_t hw_idx = (status >> 4) & 0x0FFF;
 		uint32_t sw_idx = ring->cur_tx;
@@ -809,6 +827,18 @@ b43bsd_dma_tx_status_process(struct b43bsd_softc *sc)
 			sw_idx = (sw_idx + 1) % ring->nslots;
 			if (sw_idx == hw_idx)
 				break;
+		}
+	}
+
+	/* If TX was stalled and space is now available, restart queue. */
+	{
+		struct ifnet *ifp = &sc->sc_ic.ic_if;
+
+		if (ifp->if_flags & IFF_OACTIVE) {
+			if (ring->used < ring->nslots) {
+				ifp->if_flags &= ~IFF_OACTIVE;
+				ifp->if_start(ifp);
+			}
 		}
 	}
 }
@@ -1204,6 +1234,7 @@ b43bsd_dma_tx_multiseg(struct b43bsd_softc *sc, struct mbuf *m,
 		    BUS_DMASYNC_PREWRITE);
 
 		dma_desc_write(ring, slot,
+		    B43BSD_DMA64_DCTL0_DTABLEEND |
 		    B43BSD_DMA64_DCTL0_FRAMESTART |
 		    B43BSD_DMA64_DCTL0_FRAMEEND |
 		    B43BSD_DMA64_DCTL0_IRQ,
@@ -1220,7 +1251,7 @@ b43bsd_dma_tx_multiseg(struct b43bsd_softc *sc, struct mbuf *m,
 
 		for (seg = 0; seg < nsegs; seg++) {
 			int cur_slot = (slot + seg) % ring->nslots;
-			uint32_t ctrl = B43BSD_DMA64_DCTL0_IRQ;
+			uint32_t ctrl = B43BSD_DMA64_DCTL0_DTABLEEND | B43BSD_DMA64_DCTL0_IRQ;
 
 			if (seg == 0)
 				ctrl |= B43BSD_DMA64_DCTL0_FRAMESTART;

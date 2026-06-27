@@ -131,6 +131,7 @@ struct b43bsd_dma_ring {
 	struct b43bsd_dma_desc64 *ring_desc;
 	bus_addr_t		ring_paddr;
 	int			nslots;
+	int			ring_nsegs;	/* actual nsegs from bus_dmamem_alloc */
 	int			cur_tx;		/* next TX slot */
 	int			cur_rx;		/* next RX slot */
 	int			used;		/* active TX slots */

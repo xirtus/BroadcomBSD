@@ -90,6 +90,9 @@ int b43bsd_storm_reset = 1;
  */
 int b43bsd_attach_level = 0;
 
+/* Number of segments from bus_dmamem_alloc for ring descriptor memory. */
+int b43bsd_dma_ring_nsegs = 0;
+
 /* ------------------------------------------------------------------ */
 /* Forward declarations                                                 */
 /* ------------------------------------------------------------------ */
@@ -254,6 +257,31 @@ b43bsd_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
+	/*
+	 * STAGE 2: Read chip identification from MMIO.
+	 * No PCI config changes yet — use the firmware's BAR0_WIN setting.
+	 */
+	sc->sc_chipid = bus_space_read_4(sc->sc_st, sc->sc_sh, 0);
+	if (sc->sc_chipid == 0xffffffff || sc->sc_chipid == 0) {
+		/* Chip might be in reset. Toggle watchdog to reset. */
+		bus_space_write_4(sc->sc_st, sc->sc_sh, 0x0400, 1);
+		delay(1000);
+		bus_space_write_4(sc->sc_st, sc->sc_sh, 0x0400, 0);
+		delay(10000);
+		sc->sc_chipid = bus_space_read_4(sc->sc_st, sc->sc_sh, 0);
+	}
+	sc->sc_chiprev = (sc->sc_chipid & B43_CHIPID_MASK) >>
+	    B43_CHIPID_SHIFT;
+
+	printf(": BCM%x rev %d", sc->sc_chipid & 0xffff,
+	    (sc->sc_chipid >> 16) & 0xf);
+	if (level <= 2) {
+		printf(" level2-ok\n");
+		bus_space_unmap(sc->sc_st, sc->sc_sh, sc->sc_sz);
+		sc->sc_sz = 0;
+		return;
+	}
+
 	/* Fix BAR0_WIN (PCI config 0x80) so ChipCommon is at BAR0 offset 0. */
 	{
 		pcireg_t bar0win;
@@ -276,14 +304,14 @@ b43bsd_attach(struct device *parent, struct device *self, void *aux)
 		pcie_cap = pci_get_capability(pa->pa_pc, pa->pa_tag,
 		    PCI_CAP_PCIEXPRESS, NULL, NULL);
 		if (pcie_cap) {
-			pcireg_t lnkctl;
+			pcireg_t lcsr;
 
-			lnkctl = pci_conf_read(pa->pa_pc, pa->pa_tag,
-			    pcie_cap + PCI_PCIE_LCAP);
-			lnkctl &= ~(PCI_PCIE_LCAP_ASPM_L0S |
-			    PCI_PCIE_LCAP_ASPM_L1);
+			lcsr = pci_conf_read(pa->pa_pc, pa->pa_tag,
+			    pcie_cap + PCI_PCIE_LCSR);
+			lcsr &= ~(PCI_PCIE_LCSR_ASPM_L0S |
+			    PCI_PCIE_LCSR_ASPM_L1);
 			pci_conf_write(pa->pa_pc, pa->pa_tag,
-			    pcie_cap + PCI_PCIE_LCAP, lnkctl);
+			    pcie_cap + PCI_PCIE_LCSR, lcsr);
 		}
 	}
 
@@ -308,30 +336,6 @@ b43bsd_attach(struct device *parent, struct device *self, void *aux)
 		cmd |= PCI_COMMAND_MEM_ENABLE;
 		pci_conf_write(pa->pa_pc, pa->pa_tag,
 		    PCI_COMMAND_STATUS_REG, cmd);
-	}
-
-	/*
-	 * STAGE 2: Read chip identification from MMIO.
-	 */
-	sc->sc_chipid = bus_space_read_4(sc->sc_st, sc->sc_sh, 0);
-	if (sc->sc_chipid == 0xffffffff || sc->sc_chipid == 0) {
-		/* Chip might be in reset. Toggle watchdog to reset. */
-		bus_space_write_4(sc->sc_st, sc->sc_sh, 0x0400, 1);
-		delay(1000);
-		bus_space_write_4(sc->sc_st, sc->sc_sh, 0x0400, 0);
-		delay(10000);
-		sc->sc_chipid = bus_space_read_4(sc->sc_st, sc->sc_sh, 0);
-	}
-	sc->sc_chiprev = (sc->sc_chipid & B43_CHIPID_MASK) >>
-	    B43_CHIPID_SHIFT;
-
-	printf(": BCM%x rev %d", sc->sc_chipid & 0xffff,
-	    (sc->sc_chipid >> 16) & 0xf);
-	if (level <= 2) {
-		printf(" level2-ok\n");
-		bus_space_unmap(sc->sc_st, sc->sc_sh, sc->sc_sz);
-		sc->sc_sz = 0;
-		return;
 	}
 
 	/*
@@ -494,7 +498,14 @@ b43bsd_attach(struct device *parent, struct device *self, void *aux)
 
 	if (level <= 5) {
 		printf(" level5-ok\n");
-		goto free_ssb;
+		/*
+		 * Level 5: net80211 interface is attached but no
+		 * interrupts, no firmware, no DMA.  Keep BAR0 and
+		 * SSB mapped — the interface needs them to respond
+		 * to ifconfig queries.  Full chip init + interrupts
+		 * happen at level 6.
+		 */
+		return;
 	}
 
 	/*
@@ -945,8 +956,15 @@ b43bsd_init(struct b43bsd_softc *sc)
 		return EPERM;
 	}
 
-	/* Refuse to init if no 802.11 core was found (BAR0 too small). */
-	if (sc->sc_ssb->ieee80211_idx < 0) {
+	/* Refuse to init if interrupt not established (staging levels 0-5). */
+	if (sc->sc_ih == NULL) {
+		printf("%s: interrupt not established (staging level < 6), "
+		    "cannot init\n", sc->sc_dev.dv_xname);
+		return ENXIO;
+	}
+
+	/* Refuse to init if SSB bus was not attached or no 802.11 core found. */
+	if (sc->sc_ssb == NULL || sc->sc_ssb->ieee80211_idx < 0) {
 		printf("%s: no 802.11 core found (BAR0 too small?)\n",
 		    sc->sc_dev.dv_xname);
 		return ENXIO;
@@ -1966,6 +1984,9 @@ b43bsd_led_on(struct b43bsd_softc *sc, int gpio)
 {
 	uint32_t val;
 
+	if (sc->sc_ssb == NULL)
+		return;
+
 	/* Enable GPIO output. */
 	val = ssb_read32(sc->sc_ssb, SSB_GPIO_OUT_ENABLE);
 	val |= (1 << gpio);
@@ -1983,6 +2004,9 @@ void
 b43bsd_led_off(struct b43bsd_softc *sc, int gpio)
 {
 	uint32_t val;
+
+	if (sc->sc_ssb == NULL)
+		return;
 
 	val = ssb_read32(sc->sc_ssb, SSB_GPIO_OUT);
 	val &= ~(1 << gpio);
@@ -2884,13 +2908,13 @@ b43bsd_crypto_write_key(struct b43bsd_softc *sc, int slot,
 	switch (cipher) {
 	case IEEE80211_CIPHER_WEP40:
 	case IEEE80211_CIPHER_WEP104:
-		kctl |= 0x00000001;	/* WEP */
+		kctl |= 0x00000000;	/* WEP (algorithm 0) */
 		break;
 	case IEEE80211_CIPHER_TKIP:
-		kctl |= 0x00000002;	/* TKIP */
+		kctl |= 0x00000001;	/* TKIP (algorithm 1) */
 		break;
 	case IEEE80211_CIPHER_CCMP:
-		kctl |= 0x00000003;	/* CCMP */
+		kctl |= 0x00000002;	/* CCMP (algorithm 2) */
 		break;
 	}
 

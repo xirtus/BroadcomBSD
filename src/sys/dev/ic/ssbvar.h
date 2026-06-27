@@ -146,11 +146,14 @@ ssb_write16(struct ssb_bus *bus, uint32_t offset, uint16_t val)
 static inline uint32_t
 ssb_core_read32(struct ssb_bus *bus, int core_idx, uint16_t offset)
 {
-	struct ssb_core *core = &bus->cores[core_idx];
+	struct ssb_core *core;
 
-	/* Validate: offset must be within 0x1000. */
+	/* Validate: core index must be in range and offset within 0x1000. */
+	if (core_idx < 0 || core_idx >= bus->ncores)
+		return 0;
 	if (offset >= SSB_CORE_SIZE)
 		return 0;
+	core = &bus->cores[core_idx];
 	return bus_space_read_4(bus->bst, bus->bsh, core->base + offset);
 }
 
@@ -158,22 +161,28 @@ static inline void
 ssb_core_write32(struct ssb_bus *bus, int core_idx, uint16_t offset,
     uint32_t val)
 {
-	struct ssb_core *core = &bus->cores[core_idx];
+	struct ssb_core *core;
 
+	if (core_idx < 0 || core_idx >= bus->ncores)
+		return;
 	if (offset >= SSB_CORE_SIZE)
 		return;
+	core = &bus->cores[core_idx];
 	bus_space_write_4(bus->bst, bus->bsh, core->base + offset, val);
 }
 
 static inline uint16_t
 ssb_core_read16(struct ssb_bus *bus, int core_idx, uint16_t offset)
 {
-	struct ssb_core *core = &bus->cores[core_idx];
+	struct ssb_core *core;
 	uint32_t v;
 	uint32_t abs;
 
+	if (core_idx < 0 || core_idx >= bus->ncores)
+		return 0;
 	if (offset >= SSB_CORE_SIZE)
 		return 0;
+	core = &bus->cores[core_idx];
 	abs = core->base + offset;
 	v = bus_space_read_4(bus->bst, bus->bsh, abs & ~3);
 	v >>= (abs & 3) * 8;
@@ -184,12 +193,15 @@ static inline void
 ssb_core_write16(struct ssb_bus *bus, int core_idx, uint16_t offset,
     uint16_t val)
 {
-	struct ssb_core *core = &bus->cores[core_idx];
+	struct ssb_core *core;
 	uint32_t v;
 	uint32_t abs;
 
+	if (core_idx < 0 || core_idx >= bus->ncores)
+		return;
 	if (offset >= SSB_CORE_SIZE)
 		return;
+	core = &bus->cores[core_idx];
 	abs = core->base + offset;
 	v = bus_space_read_4(bus->bst, bus->bsh, abs & ~3);
 	switch (abs & 3) {

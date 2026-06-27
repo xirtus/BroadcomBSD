@@ -42,31 +42,33 @@ extern int b43bsd_debug;
 void
 b43bsd_debug_dump_regs(struct b43bsd_softc *sc)
 {
+	uint32_t off = sc->sc_11core_offset;
+
 	printf("%s: === Register Dump ===\n", sc->sc_dev.dv_xname);
 	printf("%s: CHIPID          = 0x%08x\n",
 	    sc->sc_dev.dv_xname,
 	    bus_space_read_4(sc->sc_st, sc->sc_sh, B43_CHIPID));
 	printf("%s: GEN_IRQ_REASON  = 0x%08x\n",
 	    sc->sc_dev.dv_xname,
-	    bus_space_read_4(sc->sc_st, sc->sc_sh, B43_MMIO_GEN_IRQ_REASON));
+	    bus_space_read_4(sc->sc_st, sc->sc_sh, off + B43_MMIO_GEN_IRQ_REASON));
 	printf("%s: GEN_IRQ_MASK    = 0x%08x\n",
 	    sc->sc_dev.dv_xname,
-	    bus_space_read_4(sc->sc_st, sc->sc_sh, B43_MMIO_GEN_IRQ_MASK));
+	    bus_space_read_4(sc->sc_st, sc->sc_sh, off + B43_MMIO_GEN_IRQ_MASK));
 	printf("%s: MACCTL          = 0x%08x\n",
 	    sc->sc_dev.dv_xname,
-	    bus_space_read_4(sc->sc_st, sc->sc_sh, B43_MMIO_MACCTL));
+	    bus_space_read_4(sc->sc_st, sc->sc_sh, off + B43_MMIO_MACCTL));
 	printf("%s: DMA64_TX_CTL    = 0x%08x\n",
 	    sc->sc_dev.dv_xname,
-	    bus_space_read_4(sc->sc_st, sc->sc_sh, B43BSD_DMA64_TX_CTL));
+	    bus_space_read_4(sc->sc_st, sc->sc_sh, off + B43BSD_DMA64_TX_CTL));
 	printf("%s: DMA64_TX_STATUS = 0x%08x\n",
 	    sc->sc_dev.dv_xname,
-	    bus_space_read_4(sc->sc_st, sc->sc_sh, B43BSD_DMA64_TX_STATUS));
+	    bus_space_read_4(sc->sc_st, sc->sc_sh, off + B43BSD_DMA64_TX_STATUS));
 	printf("%s: DMA64_RX_CTL    = 0x%08x\n",
 	    sc->sc_dev.dv_xname,
-	    bus_space_read_4(sc->sc_st, sc->sc_sh, B43BSD_DMA64_RX_CTL));
+	    bus_space_read_4(sc->sc_st, sc->sc_sh, off + B43BSD_DMA64_RX_CTL));
 	printf("%s: DMA64_RX_STATUS = 0x%08x\n",
 	    sc->sc_dev.dv_xname,
-	    bus_space_read_4(sc->sc_st, sc->sc_sh, B43BSD_DMA64_RX_STATUS));
+	    bus_space_read_4(sc->sc_st, sc->sc_sh, off + B43BSD_DMA64_RX_STATUS));
 }
 
 /*
@@ -77,6 +79,9 @@ b43bsd_debug_dump_cores(struct b43bsd_softc *sc)
 {
 	struct ssb_bus *bus = sc->sc_ssb;
 	int i;
+
+	if (bus == NULL)
+		return;
 
 	printf("%s: === SSB Core Table (n=%d) ===\n",
 	    sc->sc_dev.dv_xname, bus->ncores);
